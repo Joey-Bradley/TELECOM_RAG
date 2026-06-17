@@ -88,6 +88,7 @@ def load_collection():
         )
         return collection
     except Exception as e:
+        st.error(f"Vector store error: {e}")
         return None
  
  
