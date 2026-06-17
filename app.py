@@ -17,6 +17,7 @@ from openai import OpenAI
  
 # ── Config ──────────────────────────────────────────────────────────────────
 CHROMA_DIR = "./chroma_db"
+DOCS_DIR = "./docs"
 COLLECTION_NAME = "telecom_docs"
 TOP_K = 5  # Number of chunks to retrieve per query
  
@@ -77,24 +78,38 @@ with st.sidebar:
 # ── Load Vector Store ─────────────────────────────────────────────────────────
 @st.cache_resource
 def load_collection():
-    from ingest import ingest
     try:
         ef = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
-        client = chromadb.PersistentClient(path=CHROMA_DIR)
+        # Try persistent first (local dev), fall back to in-memory (Streamlit Cloud)
         try:
-            collection = client.get_collection(
+            client = chromadb.PersistentClient(path=CHROMA_DIR)
+            collection = client.get_or_create_collection(
                 name=COLLECTION_NAME,
-                embedding_function=ef
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"}
             )
         except Exception:
-            st.info("Building vector store for the first time, please wait...")
-            ingest()
-            collection = client.get_collection(
+            client = chromadb.EphemeralClient()
+            collection = client.get_or_create_collection(
                 name=COLLECTION_NAME,
-                embedding_function=ef
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"}
             )
+
+        if collection.count() == 0:
+            from ingest import load_documents, chunk_text
+            st.info("Building vector store, please wait...")
+            documents = load_documents(DOCS_DIR)
+            all_chunks, all_ids, all_metadata = [], [], []
+            for chunk_id, doc in enumerate([c for d in documents for c in [{"text": ch, "source": d["source"]} for ch in chunk_text(d["text"])]]):
+                all_chunks.append(doc["text"])
+                all_ids.append(f"chunk_{chunk_id}")
+                all_metadata.append({"source": doc["source"]})
+            for i in range(0, len(all_chunks), 100):
+                collection.add(documents=all_chunks[i:i+100], ids=all_ids[i:i+100], metadatas=all_metadata[i:i+100])
+
         return collection
     except Exception as e:
         st.error(f"Vector store error: {e}")
