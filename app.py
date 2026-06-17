@@ -77,15 +77,24 @@ with st.sidebar:
 # ── Load Vector Store ─────────────────────────────────────────────────────────
 @st.cache_resource
 def load_collection():
+    from ingest import ingest
     try:
         ef = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_collection(
-            name=COLLECTION_NAME,
-            embedding_function=ef
-        )
+        try:
+            collection = client.get_collection(
+                name=COLLECTION_NAME,
+                embedding_function=ef
+            )
+        except Exception:
+            st.info("Building vector store for the first time, please wait...")
+            ingest()
+            collection = client.get_collection(
+                name=COLLECTION_NAME,
+                embedding_function=ef
+            )
         return collection
     except Exception as e:
         st.error(f"Vector store error: {e}")
