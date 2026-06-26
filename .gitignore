@@ -1,4 +1,23 @@
+# Secrets — never commit
 .env
+.env.local
+.streamlit/secrets.toml
+
+# Python
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Model cache
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

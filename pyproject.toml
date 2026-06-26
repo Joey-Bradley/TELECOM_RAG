@@ -1,0 +1,13 @@
+[project]
+name = "telecom-rag"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit>=1.32.0",
+    "supabase>=2.3.0",
+    "sentence-transformers>=2.5.1",
+    "openai>=1.12.0",
+    "pypdf>=4.0.0",
+    "python-dotenv>=1.0.0",
+    "torchvision",
+]

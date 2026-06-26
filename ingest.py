@@ -1,118 +1,124 @@
 """
-ingest.py - Load telecom documents into ChromaDB vector store
-Run this once before launching the app: python ingest.py
+ingest.py — Load telecom documents into Supabase pgvector
+
+Run once before launching the app (or whenever you add new docs):
+  python ingest.py
+
+Requires environment variables (set in .env):
+  SUPABASE_URL          — https://your-project.supabase.co
+  SUPABASE_SERVICE_KEY  — service role key (bypasses RLS for writes)
 """
 
 import os
 import glob
-import chromadb
-from chromadb.utils import embedding_functions
+from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
+from supabase import create_client
+
+load_dotenv()
 
 DOCS_DIR = "./docs"
-CHROMA_DIR = "./chroma_db"
-COLLECTION_NAME = "telecom_docs"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384-dim, runs locally
+BATCH_SIZE = 50
 
 
-def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
     """Split text into overlapping chunks."""
     chunks = []
     start = 0
     while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
+        chunk = text[start : start + chunk_size]
         if chunk.strip():
             chunks.append(chunk)
         start += chunk_size - overlap
     return chunks
 
 
-def load_documents(docs_dir):
-    """Load all .txt and .pdf files from the docs directory."""
+def load_documents(docs_dir: str) -> list[dict]:
+    """Load .txt and .pdf files from the docs directory."""
     documents = []
 
-    # Load .txt files
     for filepath in glob.glob(os.path.join(docs_dir, "*.txt")):
         with open(filepath, "r", encoding="utf-8") as f:
             text = f.read()
         documents.append({"text": text, "source": os.path.basename(filepath)})
-        print(f"Loaded: {filepath}")
+        print(f"  Loaded: {filepath}")
 
-    # Load .pdf files if pypdf is available
     try:
         from pypdf import PdfReader
+
         for filepath in glob.glob(os.path.join(docs_dir, "*.pdf")):
             reader = PdfReader(filepath)
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
             documents.append({"text": text, "source": os.path.basename(filepath)})
-            print(f"Loaded PDF: {filepath}")
+            print(f"  Loaded PDF: {filepath}")
     except ImportError:
-        pass
+        print("  pypdf not installed — skipping PDF files.")
 
     return documents
 
 
 def ingest():
-    print("Starting document ingestion...")
+    print("=" * 50)
+    print("Telecom RAG — Document Ingestion")
+    print("=" * 50)
 
-    # Set up embedding function using sentence-transformers (free, local)
-    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name="all-MiniLM-L6-v2"
-    )
+    # Connect to Supabase with the service role key (bypasses RLS)
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_KEY")
 
-    # Initialize ChromaDB
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    if not url or not key:
+        raise ValueError(
+            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env\n"
+            "Find your service role key in Supabase → Project Settings → API"
+        )
 
-    # Delete existing collection if it exists (fresh ingest)
-    try:
-        client.delete_collection(COLLECTION_NAME)
-        print("Cleared existing collection.")
-    except Exception:
-        pass
+    supabase = create_client(url, key)
+    print("Connected to Supabase.")
 
-    collection = client.create_collection(
-        name=COLLECTION_NAME,
-        embedding_function=ef,
-        metadata={"hnsw:space": "cosine"}
-    )
+    # Load embedding model
+    print(f"\nLoading embedding model: {EMBEDDING_MODEL}")
+    model = SentenceTransformer(EMBEDDING_MODEL)
 
     # Load and chunk documents
+    print(f"\nScanning docs/ directory...")
     documents = load_documents(DOCS_DIR)
     if not documents:
         print(f"No documents found in {DOCS_DIR}/")
-        print("Add .txt or .pdf files to the docs/ folder and run again.")
+        print("Add .txt or .pdf files and re-run.")
         return
 
-    all_chunks = []
-    all_ids = []
-    all_metadata = []
+    print(f"\nFound {len(documents)} document(s). Chunking...")
 
-    chunk_id = 0
+    # Clear existing data
+    supabase.table("telecom_docs").delete().neq("id", 0).execute()
+    print("Cleared existing records.")
+
+    # Build rows
+    all_rows = []
     for doc in documents:
         chunks = chunk_text(doc["text"])
         for chunk in chunks:
-            all_chunks.append(chunk)
-            all_ids.append(f"chunk_{chunk_id}")
-            all_metadata.append({"source": doc["source"]})
-            chunk_id += 1
+            embedding = model.encode(chunk).tolist()
+            all_rows.append(
+                {"content": chunk, "source": doc["source"], "embedding": embedding}
+            )
 
-    # Add to ChromaDB in batches
-    batch_size = 100
-    for i in range(0, len(all_chunks), batch_size):
-        collection.add(
-            documents=all_chunks[i:i+batch_size],
-            ids=all_ids[i:i+batch_size],
-            metadatas=all_metadata[i:i+batch_size]
-        )
+    print(f"\nInserting {len(all_rows)} chunks in batches of {BATCH_SIZE}...")
+    for i in range(0, len(all_rows), BATCH_SIZE):
+        batch = all_rows[i : i + BATCH_SIZE]
+        supabase.table("telecom_docs").insert(batch).execute()
+        end = min(i + BATCH_SIZE, len(all_rows))
+        print(f"  Inserted chunks {i + 1}–{end}")
 
-    print(f"\nIngestion complete!")
-    print(f"  Documents loaded: {len(documents)}")
-    print(f"  Total chunks stored: {len(all_chunks)}")
-    print(f"  Vector store saved to: {CHROMA_DIR}/")
-    print("\nYou can now run the app: streamlit run app.py")
+    print("\n" + "=" * 50)
+    print(f"Ingestion complete!")
+    print(f"  Documents : {len(documents)}")
+    print(f"  Chunks    : {len(all_rows)}")
+    print("=" * 50)
+    print("\nYou can now run: streamlit run app.py")
 
 
 if __name__ == "__main__":

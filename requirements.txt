@@ -1,9 +1,6 @@
 streamlit>=1.32.0
-chromadb>=0.4.22
+supabase>=2.3.0
 sentence-transformers>=2.5.1
 openai>=1.12.0
-langchain>=0.1.9
-langchain-community>=0.0.24
 pypdf>=4.0.0
 python-dotenv>=1.0.0
-protobuf>=3.20.0,<4.0.0

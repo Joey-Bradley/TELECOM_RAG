@@ -2,7 +2,7 @@
 Telecom RAG Assistant
 A chatbot that answers telecom engineering questions using your own documentation.
 
-Environment variables (set in .env locally or Streamlit Cloud secrets):
+Streamlit Cloud secrets needed:
   SUPABASE_URL
   SUPABASE_KEY
   DEEPSEEK_API_KEY  (optional — users can also enter their own in the sidebar)
@@ -17,26 +17,20 @@ from openai import OpenAI
 
 load_dotenv()
 
-# ── Config ────────────────────────────────────────────────────────────────────
 TOP_K = 5
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
 
-st.set_page_config(
-    page_title="Telecom RAG Assistant",
-    page_icon="📡",
-    layout="wide",
-)
+st.set_page_config(page_title="Telecom RAG Assistant", page_icon="📡", layout="wide")
 
 st.title("📡 Telecom RAG Assistant")
 st.markdown("Ask questions about telecom engineering — RF optimization, LTE/5G, handovers, KPIs, and more.")
 st.divider()
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Secret helper ─────────────────────────────────────────────────────────────
 def get_secret(key: str, default: str = "") -> str:
-    """Read from environment variables or Streamlit secrets."""
     val = os.environ.get(key)
     if val:
         return val
@@ -50,9 +44,9 @@ def get_secret(key: str, default: str = "") -> str:
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    server_api_key = get_secret("DEEPSEEK_API_KEY")
-    if server_api_key:
-        api_key = server_api_key
+    server_key = get_secret("DEEPSEEK_API_KEY")
+    if server_key:
+        api_key = server_key
         st.success("API key configured ✓")
     else:
         api_key = st.text_input(
@@ -109,7 +103,7 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if "sources" in msg:
+        if msg.get("sources"):
             with st.expander("📄 Sources"):
                 for src in msg["sources"]:
                     st.markdown(f"**{src['source']}**")
@@ -136,15 +130,15 @@ def query_rag(question: str, key: str):
         "You are a senior telecommunications engineer with deep expertise in RF optimization, "
         "LTE/5G networks, CDMA systems, network performance engineering, and multi-vendor environments "
         "(Nokia, Ericsson, Alcatel-Lucent).\n\n"
-        "Answer questions using the provided context from telecom documentation. Be specific and technical. "
-        "If the context doesn't contain enough information to fully answer, say so clearly. "
+        "Answer using the provided context. Be specific and technical. "
+        "If the context is insufficient, say so and provide general expertise. "
         "Always cite which part of the documentation supports your answer."
     )
 
     user_prompt = (
         f"Context from telecom documentation:\n{context}\n\n"
         f"Question: {question}\n\n"
-        "Please provide a detailed, technical answer based on the documentation above."
+        "Provide a detailed, technical answer based on the documentation above."
     )
 
     client = OpenAI(api_key=key, base_url=DEEPSEEK_BASE_URL)
@@ -177,7 +171,6 @@ for i, (col, q) in enumerate(zip(cols, placeholder_questions)):
         st.session_state["prefill"] = q
 
 question = st.session_state.pop("prefill", None)
-
 user_input = st.chat_input("Ask a telecom engineering question...")
 if user_input:
     question = user_input
@@ -194,22 +187,17 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Searching documentation and generating answer..."):
             try:
-                answer, sources = query_rag(question, api_key)
+                answer, src_list = query_rag(question, api_key)
                 st.markdown(answer)
                 with st.expander("📄 Sources used"):
-                    for src in sources:
+                    for src in src_list:
                         st.markdown(f"**{src['source']}**")
                         st.text(src["text"][:300] + "..." if len(src["text"]) > 300 else src["text"])
-
                 st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer,
-                    "sources": sources,
+                    "role": "assistant", "content": answer, "sources": src_list
                 })
             except Exception as e:
                 st.error(f"Error: {e}")
 
-
-# ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
 st.caption("Telecom RAG Assistant | Supabase pgvector · DeepSeek API · Streamlit")
